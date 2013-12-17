@@ -1,0 +1,128 @@
+#!/usr/bin/python
+
+from twisted.words.protocols import irc
+from twisted.internet import protocol
+from twisted.internet import reactor
+import getopt
+import sys
+import string
+import irc_msg
+
+def main():
+    # parse command line options
+    try:
+        opts, args = getopt.getopt(sys.argv[1:], "h", ["help"])
+    except getopt.error, msg:
+        print(msg)
+        print("For help use --help")
+        sys.exit(2)
+    # process options
+    for o, a in opts:
+        print("arg is: %s" % o)
+        if o in ("-h", "--help"):
+            print("syntax: martbot [server] [channel (no hash)] [nick]\nFor help use --help")
+            sys.exit(0)
+    # process arguments
+    """
+    for arg in sys.argv:
+        process(arg) # process() is defined elsewhere
+    """
+    
+    server = sys.argv[1]
+    channel = "#" + sys.argv[2]
+    nickname = sys.argv[3]
+    try:
+        reactor.connectTCP(server, 6667, MartBotFactory(channel, nickname))
+        reactor.run()
+    except:
+        sys.exit(2)
+      
+def process(arg):
+    """If we need to do something with the args in the future"""
+    print(arg)
+    
+    return
+    
+    
+class MartBot(irc.IRCClient):
+    def _get_nickname(self):
+        return self.factory.nickname
+    nickname = property(_get_nickname)
+
+    def signedOn(self):
+        self.join(self.factory.channel)
+        print "Signed on as %s." % (self.nickname)
+
+    def joined(self, channel):
+        print "Joined %s." % (channel)
+
+    def privmsg(self, user, channel, msg):
+        print("message is: %s" % msg)
+        user = user.split('!', 1)[0]
+        print("user is: %s\n" % user)
+        # Check to see if they're sending me a private message
+        if channel == self.nickname:
+            user, channel, msg, flag = irc_msg.msgtype(user, channel, msg, "p")
+            self.output(user, channel, msg, flag)
+        # Otherwise check to see if it is a message directed at me
+        elif msg.startswith(self.nickname + ":"):
+            msg = msg.split(': ', 1)[1]     # For some reason the username is included in msg so a split is necessary.
+            user, channel, msg, flag = irc_msg.msgtype(user, channel, msg, "m")
+            self.output(user, channel, msg, flag)
+        else:
+            # message is in-channel
+            user, channel, msg, flag = irc_msg.msgtype(user, channel, msg, "c")
+            self.output(user, channel, msg, flag)
+                    
+    def output(self, user, channel, msg, flag):
+        # Determine where the message should go to.
+        print(user, channel, msg, flag)
+        if msg != None:
+            # Send message to user, channel or server u, c or s depending on flag:
+            if flag == "u":
+                for line in msg:
+                    self.msg(user, line)
+            elif flag == "c":
+                for line in msg:
+                    self.msg(channel, line)
+            elif flag == "s":
+                if "/join" in msg:
+                    self.join(channel)
+                elif "/leave" in msg:
+                    self.leave(channel, "Byes!")
+                elif "/say" in msg:
+                    msg = ' '.join(msg[3:])     # Everything after #channel
+                    self.say(channel, msg)
+    
+    def action(self, user, channel, msg):
+        """This will get called when the bot sees someone do an action."""
+        print("Action! %s - %s" % user, msg)
+        msg = irc_msg.msgtype(user, channel, msg, "m")
+        if msg != None:
+            self.msg(channel, msg)
+
+    def irc_NICK(self, prefix, params):
+        """Called when an IRC user changes their nickname."""
+        
+    def userJoined(self, user, channel):
+        """Called when someone joins the channel."""
+        if user != self.nickname:
+            msg = irc_msg.userjoin(user, channel)
+            if msg != None:
+                self.msg(channel, msg)
+
+
+
+class MartBotFactory(protocol.ClientFactory):
+    protocol = MartBot
+
+    def __init__(self, channel, nickname):
+        self.channel = channel
+        self.nickname = nickname
+
+    def clientConnectionLost(self, connector, reason):
+        print "Lost connection (%s), reconnecting." % (reason)
+        connector.connect()
+
+    def clientConnectionFailed(self, connector, reason):
+        print "Could not connect: %s" % (reason)
